@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useLocation } from "react-router-dom";
 import ProgressBar from "../../common/ProgressBar";
 import DocumentUpload from "../../common/DocumentUpload";
 import { generateApplicationNumber } from "../../../utils/generateApplicationNumber";
@@ -21,36 +22,49 @@ const initialForm = {
   state: "",
   district: "",
   address: "",
-  propertyType: "",
   connectionType: "", // LPG / PNG
   usageType: "", // Domestic / Commercial
-  cylinderType: "", // only for LPG
+  cylinderType: "", // only LPG
   documents: {},
 };
 
 const GasNewConnection = () => {
+  const location = useLocation();
+  const notify = useNotification();
+
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState(initialForm);
   const [districts, setDistricts] = useState([]);
   const [errors, setErrors] = useState({});
   const [applicationNo, setApplicationNo] = useState(null);
+  const [agreed, setAgreed] = useState(false);
 
-  const notify = useNotification();
+  /* ---------- AUTO SELECT LPG / PNG FROM ROUTE ---------- */
+  useEffect(() => {
+    if (location.pathname.includes("new-lpg")) {
+      setFormData((f) => ({ ...f, connectionType: "LPG" }));
+    }
+    if (location.pathname.includes("new-png")) {
+      setFormData((f) => ({ ...f, connectionType: "PNG" }));
+    }
+  }, [location.pathname]);
 
-  /* ---------------- LOAD DRAFT ---------------- */
+  /* ---------- LOAD DRAFT ---------- */
   useEffect(() => {
     const draft = localStorage.getItem("gas_new_connection_draft");
     if (draft) {
       const parsed = JSON.parse(draft);
       setFormData(parsed);
       if (parsed.state) {
-        const found = statesData.states.find(s => s.state === parsed.state);
+        const found = statesData.states.find(
+          (s) => s.state === parsed.state
+        );
         if (found) setDistricts(found.districts);
       }
     }
   }, []);
 
-  /* ---------------- SAVE DRAFT ---------------- */
+  /* ---------- SAVE DRAFT ---------- */
   const saveDraft = () => {
     localStorage.setItem(
       "gas_new_connection_draft",
@@ -59,79 +73,94 @@ const GasNewConnection = () => {
     notify.success("Draft saved successfully");
   };
 
-  /* ---------------- STATE LOGIC ---------------- */
+  /* ---------- STATE / DISTRICT ---------- */
   const handleStateChange = (e) => {
     const selected = e.target.value;
-    const found = statesData.states.find(s => s.state === selected);
+    const found = statesData.states.find((s) => s.state === selected);
     setFormData({ ...formData, state: selected, district: "" });
     setDistricts(found ? found.districts : []);
   };
 
-  /* ---------------- VALIDATION ---------------- */
+  /* ---------- VALIDATION ---------- */
   const validateStep = () => {
-    const newErrors = {};
+    const e = {};
 
     if (step === 0) {
-      if (!formData.name) newErrors.name = "Name is required";
+      if (!formData.name) e.name = "Name is required";
       if (!formData.aadhaar || formData.aadhaar.length !== 12)
-        newErrors.aadhaar = "Valid 12-digit Aadhaar required";
+        e.aadhaar = "Valid 12-digit Aadhaar required";
     }
 
     if (step === 1) {
-      if (!formData.state) newErrors.state = "Select state";
-      if (!formData.district) newErrors.district = "Select district";
-      if (!formData.address) newErrors.address = "Address required";
+      if (!formData.state) e.state = "Select state";
+      if (!formData.district) e.district = "Select district";
+      if (!formData.address) e.address = "Address required";
     }
 
     if (step === 2) {
-      if (!formData.connectionType)
-        newErrors.connectionType = "Select connection type";
-      if (!formData.usageType)
-        newErrors.usageType = "Select usage type";
+      if (!formData.usageType) e.usageType = "Select usage type";
       if (
         formData.connectionType === "LPG" &&
         !formData.cylinderType
       ) {
-        newErrors.cylinderType = "Select cylinder type";
+        e.cylinderType = "Select cylinder type";
       }
     }
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    if (step === 3) {
+      if (!formData.documents || Object.keys(formData.documents).length === 0) {
+        e.documents = "Upload required documents";
+      }
+    }
+
+    setErrors(e);
+    return Object.keys(e).length === 0;
   };
 
-  /* ---------------- NAVIGATION ---------------- */
+  /* ---------- NAVIGATION ---------- */
   const nextStep = () => {
     if (!validateStep()) return;
     setStep(step + 1);
   };
   const prevStep = () => setStep(step - 1);
 
-  /* ---------------- SUBMIT ---------------- */
+  /* ---------- SUBMIT ---------- */
   const handleSubmit = () => {
+    if (!agreed) {
+      notify.error("Please accept the declaration");
+      return;
+    }
+
     const appNo = generateApplicationNumber("GAS");
-    setApplicationNo(appNo);
+
+    localStorage.setItem(
+      `gas_application_${appNo}`,
+      JSON.stringify({
+        ...formData,
+        status: "Submitted",
+        submittedAt: new Date().toISOString(),
+      })
+    );
+
     localStorage.removeItem("gas_new_connection_draft");
+    setApplicationNo(appNo);
     notify.success("Gas connection application submitted");
   };
 
-  const handleChange = (e) => {
+  const handleChange = (e) =>
     setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
 
   return (
     <div className="min-h-screen bg-[#F4F7FA] py-10">
       <div className="max-w-4xl mx-auto px-6">
 
         {/* HEADER */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-extrabold text-[#8C2F00]">
-            New Gas Connection
-          </h1>
-          <p className="text-gray-600 mt-2">
-            Apply for LPG or PNG gas connection
-          </p>
-        </div>
+        <h1 className="text-4xl font-extrabold text-[#8C2F00] mb-2">
+          New Gas Connection
+        </h1>
+        <p className="text-gray-600 mb-8">
+          Apply for LPG or PNG gas connection
+        </p>
 
         <ProgressBar steps={steps} currentStep={step} />
 
@@ -147,103 +176,66 @@ const GasNewConnection = () => {
             {/* STEP 1 */}
             {step === 0 && (
               <>
-                <input
-                  name="name"
-                  placeholder="Full Name"
-                  className="gov-input mb-4"
-                  value={formData.name}
-                  onChange={handleChange}
-                />
-                <input
-                  disabled
-                  className="gov-input mb-4 bg-gray-100"
-                  value={formData.phone}
-                />
-                <input
-                  name="aadhaar"
-                  maxLength={12}
-                  className="gov-input"
+                <input name="name" placeholder="Full Name" className="gov-input mb-4"
+                  value={formData.name} onChange={handleChange} />
+                <input disabled className="gov-input mb-4 bg-gray-100"
+                  value={formData.phone} />
+                <input name="aadhaar" maxLength={12} className="gov-input"
                   placeholder="Aadhaar Number"
                   value={formData.aadhaar}
                   onChange={(e) =>
                     /^\d*$/.test(e.target.value) &&
                     setFormData({ ...formData, aadhaar: e.target.value })
-                  }
-                />
+                  } />
               </>
             )}
 
             {/* STEP 2 */}
             {step === 1 && (
               <>
-                <select
-                  className="gov-input mb-4"
-                  value={formData.state}
-                  onChange={handleStateChange}
-                >
+                <select className="gov-input mb-4"
+                  value={formData.state} onChange={handleStateChange}>
                   <option value="">Select State</option>
                   {statesData.states.map(s => (
                     <option key={s.state}>{s.state}</option>
                   ))}
                 </select>
 
-                <select
-                  className="gov-input mb-4"
+                <select className="gov-input mb-4"
                   disabled={!formData.state}
                   value={formData.district}
                   onChange={(e) =>
                     setFormData({ ...formData, district: e.target.value })
-                  }
-                >
+                  }>
                   <option value="">Select District</option>
                   {districts.map(d => (
                     <option key={d}>{d}</option>
                   ))}
                 </select>
 
-                <textarea
-                  name="address"
-                  rows="3"
-                  className="gov-input"
+                <textarea name="address" rows="3" className="gov-input"
                   placeholder="Full Address"
                   value={formData.address}
-                  onChange={handleChange}
-                />
+                  onChange={handleChange} />
               </>
             )}
 
             {/* STEP 3 */}
             {step === 2 && (
               <>
-                <select
-                  name="connectionType"
-                  className="gov-input mb-4"
-                  value={formData.connectionType}
-                  onChange={handleChange}
-                >
-                  <option value="">Connection Type</option>
-                  <option>LPG</option>
-                  <option>PNG</option>
-                </select>
+                <input disabled className="gov-input mb-4 bg-gray-100"
+                  value={formData.connectionType} />
 
-                <select
-                  name="usageType"
-                  className="gov-input mb-4"
-                  value={formData.usageType}
-                  onChange={handleChange}
-                >
+                <select name="usageType" className="gov-input mb-4"
+                  value={formData.usageType} onChange={handleChange}>
                   <option value="">Usage Type</option>
                   <option>Domestic</option>
                   <option>Commercial</option>
                 </select>
 
                 {formData.connectionType === "LPG" && (
-                  <select
-                    name="cylinderType"
-                    className="gov-input"
-                    value={formData.cylinderType}
-                    onChange={handleChange}
-                  >
+                  <select name="cylinderType" className="gov-input"
+                    value={formData.cylinderType} onChange={handleChange}>
                     <option value="">Cylinder Type</option>
                     <option>14.2 kg</option>
                     <option>5 kg</option>
@@ -261,13 +253,31 @@ const GasNewConnection = () => {
               />
             )}
 
+            {/* STEP 5 REVIEW */}
+            {step === 4 && !applicationNo && (
+              <>
+                <p><b>Name:</b> {formData.name}</p>
+                <p><b>Connection:</b> {formData.connectionType}</p>
+                <p><b>Usage:</b> {formData.usageType}</p>
+
+                <label className="flex gap-3 mt-6">
+                  <input type="checkbox"
+                    checked={agreed}
+                    onChange={(e) => setAgreed(e.target.checked)} />
+                  <span className="text-sm">
+                    I confirm that the above information is correct.
+                  </span>
+                </label>
+              </>
+            )}
+
             {/* SUCCESS */}
             {applicationNo && (
               <div className="text-center">
                 <h2 className="text-2xl font-bold text-green-700">
                   Application Submitted
                 </h2>
-                <p className="font-mono mt-2">{applicationNo}</p>
+                <p className="font-mono mt-2 text-xl">{applicationNo}</p>
               </div>
             )}
           </motion.div>
@@ -286,6 +296,7 @@ const GasNewConnection = () => {
             </div>
           </div>
         )}
+
       </div>
     </div>
   );
